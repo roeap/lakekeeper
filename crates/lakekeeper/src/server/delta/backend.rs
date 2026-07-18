@@ -24,7 +24,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-use iceberg::{NamespaceIdent, TableIdent};
+use iceberg::NamespaceIdent;
 use iceberg_ext::{
     catalog::rest::ErrorModel,
     configs::table::{gcs, s3},
@@ -52,10 +52,11 @@ use crate::{
     request_metadata::RequestMetadata,
     server::{generic_tables, maybe_get_secret},
     service::{
-        Authorizer, CatalogGenericTableOps, CatalogStore, GenericTableId, GenericTableInfo,
-        Location, ResolvedWarehouse, SecretStore, State, StoragePermissions, TableConfig,
-        Transaction, WarehouseId,
-        authz::CatalogGenericTableAction,
+        CatalogGenericTableOps, CatalogStore, GenericTableId, GenericTableInfo, Location,
+        ResolvedWarehouse, SecretStore, State, Transaction, WarehouseId,
+        authz::{Authorizer, CatalogGenericTableAction},
+        events::AuthorizationFailureSource,
+        storage::{StoragePermissions, TableConfig},
     },
 };
 
@@ -102,9 +103,10 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
         &self,
         warehouse_id: WarehouseId,
     ) -> BackendResult<Arc<ResolvedWarehouse>> {
-        let warehouse = C::get_active_warehouse_by_id(warehouse_id, self.ctx.v1_state.catalog.clone())
-            .await
-            .map_err(|e| to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e)))?;
+        let warehouse =
+            C::get_active_warehouse_by_id(warehouse_id, self.ctx.v1_state.catalog.clone())
+                .await
+                .map_err(to_backend_err)?;
         warehouse.ok_or_else(|| {
             DeltaBackendError::NotFoundGeneric(format!("warehouse '{warehouse_id}' not found"))
         })
@@ -135,7 +137,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
         warehouse_id: WarehouseId,
         table_id: &str,
     ) -> BackendResult<GenericTableInfo> {
-        let id = GenericTableId::from_str(table_id)
+        let id = GenericTableId::from_str_or_bad_request(table_id)
             .map_err(|e| DeltaBackendError::InvalidArgument(format!("invalid table id: {e}")))?;
         let mut t = C::Transaction::begin_read(self.ctx.v1_state.catalog.clone())
             .await
@@ -159,12 +161,9 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
                 .await
                 .map_err(to_backend_err)?
                 .ok_or_else(|| {
-                    DeltaBackendError::NotFound(format!(
-                        "namespace '{}' not found",
-                        namespace.to_url_string()
-                    ))
+                    DeltaBackendError::NotFound(format!("namespace {namespace:?} not found"))
                 })?;
-        Ok(hierarchy.namespace.namespace_id())
+        Ok(hierarchy.namespace_id())
     }
 
     /// Authorize a data action against a generic table identified by id.
@@ -193,9 +192,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
         )
         .await
         .map(|_| ())
-        .map_err(|e| {
-            to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e))
-        })
+        .map_err(|e| to_backend_err(e.into_error_model()))
     }
 
     /// Vend storage credentials for a location under the warehouse's storage
@@ -224,7 +221,10 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
                 tabular_info,
             )
             .await
-            .map_err(|e| to_backend_err(ErrorModel::from(e)))
+            // `TableConfigError` reaches `ErrorModel` via `IcebergErrorResponse`.
+            .map_err(|e| {
+                to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e))
+            })
     }
 }
 
@@ -397,9 +397,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
                 )
                 .await
                 .map(|_| ())
-                .map_err(|e| {
-                    to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e))
-                })
+                .map_err(|e| to_backend_err(e.into_error_model()))
             }
             DeltaAction::VendTableCredential { table_id, access } => {
                 let action = match access {
