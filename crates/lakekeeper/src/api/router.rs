@@ -128,11 +128,12 @@ pub async fn new_full_router<
     >();
 
     // The UC Delta v1 API. The `unitycatalog-delta-api` crate owns all Delta
-    // semantics via the `DeltaApiHandler`/`DeltaBackend` port; Lakekeeper declares
-    // the routes (in its own `ApiContext`-stated `Router`) so they nest inside the
-    // auth + request-metadata layers and coexist with the iceberg `/catalog/v1`
+    // semantics *and* the router; Lakekeeper mounts the crate's composable
+    // `Router<ApiContext<..>>` directly, supplying only the backend handler (built
+    // from the cloned `state`) and an async context extractor. It nests inside the
+    // auth + request-metadata layers and coexists with the iceberg `/catalog/v1`
     // routes. Effective surface: `/catalog/v1/{prefix}/delta/v1/...`.
-    let delta_routes = crate::server::delta::router::<C, A, S>();
+    let delta_routes = crate::server::delta::router::<C, A, S>(state.clone());
 
     let authorizer = state.v1_state.authz.clone();
     let management_routes = Router::new().merge(ApiServer::new_v1_router(&authorizer));
@@ -159,9 +160,9 @@ pub async fn new_full_router<
         .nest("/management/v1", management_routes)
         .nest("/lakekeeper/v1", generic_table_routes)
         // Delta v1 nested under the warehouse `{prefix}` before the fixed `/delta/v1`
-        // base → `/catalog/v1/{prefix}/delta/v1/...`. Declared as concrete
-        // `ApiContext`-stated routes so they nest inside the layers below (metadata
-        // present) and coexist with the iceberg `/catalog/v1/{prefix}/*` routes.
+        // base → `/catalog/v1/{prefix}/delta/v1/...`. The crate's composable
+        // `ApiContext`-stated router nests inside the layers below (metadata present)
+        // and coexists with the iceberg `/catalog/v1/{prefix}/*` routes.
         .nest("/catalog/v1/{prefix}/delta/v1", delta_routes)
         // Maintenance gate: rejects mutating requests (POST/PUT/PATCH/DELETE)
         // with 503 + Retry-After when MAINTENANCE_MODE=read-only. Applied
