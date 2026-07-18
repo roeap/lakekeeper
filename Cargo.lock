@@ -4744,7 +4744,7 @@ dependencies = [
 [[package]]
 name = "olai-uc-delta-api"
 version = "0.0.3"
-source = "git+https://github.com/open-lakehouse/mangrove.git?rev=ed6ec8b58f728dac55aab96e259552d465fdceaa#ed6ec8b58f728dac55aab96e259552d465fdceaa"
+source = "git+https://github.com/open-lakehouse/mangrove.git?rev=38eaca5c30b39d8869d76ad75a06db21321d8104#38eaca5c30b39d8869d76ad75a06db21321d8104"
 dependencies = [
  "async-trait",
  "axum",
