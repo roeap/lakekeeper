@@ -1,10 +1,11 @@
 //! [`LakekeeperDeltaBackend`] — Lakekeeper's implementation of the
 //! [`DeltaBackend`] port for the read path.
 //!
-//! The adapter is a `Clone` wrapper over the per-request [`ApiContext`]; each
-//! `&self` port method clones the context and delegates to Lakekeeper's existing
-//! static server logic (generic-table storage, `StorageProfile` credential
-//! vending, and generic-table authz). All Delta *semantics* stay in the crate.
+//! The adapter is a `Clone` wrapper over the [`ApiContext`] (built once at mount
+//! time from the cloned host state); each `&self` port method clones the context
+//! and delegates to Lakekeeper's existing static server logic (generic-table
+//! storage, `StorageProfile` credential vending, and generic-table authz). All
+//! Delta *semantics* stay in the crate.
 //!
 //! # Scope
 //!
@@ -65,7 +66,7 @@ type BackendResult<T> = Result<T, DeltaBackendError>;
 
 /// Lakekeeper's [`DeltaBackend`] adapter.
 ///
-/// Holds the per-request [`ApiContext`] (which is `Clone`) plus a
+/// Holds the mount-time [`ApiContext`] (which is `Clone`) plus a
 /// [`CommitCoordinator`] handle. On the read path the coordinator is never
 /// exercised — it is an [`InMemoryCommitCoordinator`] placeholder until the
 /// write-path milestone supplies a persistent one.
