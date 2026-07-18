@@ -1,6 +1,8 @@
 pub(crate) mod commit_tables;
 pub(crate) mod compression_codec;
 mod config;
+#[cfg(feature = "router")]
+pub(crate) mod delta;
 pub mod generic_tables;
 pub(crate) mod io;
 mod metrics;
