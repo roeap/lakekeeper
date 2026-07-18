@@ -520,6 +520,10 @@ mod test {
         for endpoint in Endpoint::iter() {
             if matches!(endpoint, Endpoint::PermissionV1(_))
                 || matches!(endpoint, Endpoint::Sign(_))
+                // The UC Delta v1 surface is specified by the `unitycatalog-delta-api`
+                // crate's own OpenAPI (`delta.yaml`), not by Lakekeeper's generated
+                // YAMLs, so it is not part of this crate-local completeness check.
+                || matches!(endpoint, Endpoint::DeltaV1(_))
             {
                 continue;
             }
