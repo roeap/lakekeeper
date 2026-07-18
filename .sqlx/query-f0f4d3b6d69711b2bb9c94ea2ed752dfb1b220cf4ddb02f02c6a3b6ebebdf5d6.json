@@ -145,7 +145,19 @@
                 "management-v1-list-user-roles",
                 "management-v1-list-role-transitive-members",
                 "management-v1-list-user-transitive-roles",
-                "management-v1-list-role-transitive-member-of"
+                "management-v1-list-role-transitive-member-of",
+                "delta-v1-get-config",
+                "delta-v1-create-staging-table",
+                "delta-v1-create-table",
+                "delta-v1-load-table",
+                "delta-v1-update-table",
+                "delta-v1-delete-table",
+                "delta-v1-table-exists",
+                "delta-v1-rename-table",
+                "delta-v1-get-table-credentials",
+                "delta-v1-report-metrics",
+                "delta-v1-get-staging-table-credentials",
+                "delta-v1-get-temporary-path-credentials"
               ]
             }
           }
