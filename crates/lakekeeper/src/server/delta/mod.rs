@@ -15,19 +15,21 @@
 //! # Routing & warehouse scoping
 //!
 //! The UC Delta paths carry no warehouse segment, and Lakekeeper identifies a
-//! warehouse only by a URL prefix. Lakekeeper declares the Delta routes (see
+//! warehouse only by a URL prefix. Lakekeeper mounts the crate router (see
 //! [`router`]) under a warehouse `{prefix}` before the fixed `/delta/v1` base, so
-//! the effective surface is `/catalog/v1/{prefix}/delta/v1/...`. Each handler
-//! parses the warehouse from that prefix into `DeltaRequestContext` (the crate's
-//! `Cx`) and builds the adapter; the Delta `catalog` + `schema` coordinates map to
+//! the effective surface is `/catalog/v1/{prefix}/delta/v1/...`. The warehouse is
+//! resolved from that prefix into `DeltaRequestContext` (the crate's `Cx`) inside
+//! the async context extractor; the Delta `catalog` + `schema` coordinates map to
 //! a two-level namespace within the warehouse.
 //!
-//! The routes are declared here rather than reusing the crate's `get_router`
-//! because the crate makes the handler the axum `State` and returns a fully-stated
-//! `Router`, which cannot compose into Lakekeeper's `ApiContext`-stated router
-//! inside its middleware layers. The crate still owns every Delta behavior via the
-//! `DeltaApiHandler`/`DeltaBackend` port. Tracked upstream for a composable
-//! router: `open-lakehouse/mangrove#135`.
+//! The crate router is **composable and is reused directly** — it returns an
+//! unstated `Router<S>` over Lakekeeper's `ApiContext` state, so it nests inside
+//! the middleware layers without Lakekeeper re-declaring any route. Lakekeeper
+//! supplies only the backend handler and an async context extractor; the crate
+//! owns every Delta behavior via the `DeltaApiHandler`/`DeltaBackend` port. The
+//! composable router (and the async extractor that lets `Cx` read the `{prefix}`
+//! path segment) landed upstream as `open-lakehouse/mangrove#135` / `#142`
+//! (**resolved**).
 
 mod backend;
 mod context;
