@@ -45,8 +45,8 @@ type Ctx<A, C, S> = ApiContext<ServiceState<A, C, S>>;
 
 /// Build the Delta v1 sub-router. Mounted by the host under
 /// `/catalog/v1/{prefix}/delta/v1`, so route paths here are relative to that base.
-pub(crate) fn router<C: CatalogStore, A: Authorizer + Clone, S: SecretStore>() -> Router<Ctx<A, C, S>>
-{
+pub(crate) fn router<C: CatalogStore, A: Authorizer + Clone, S: SecretStore>()
+-> Router<Ctx<A, C, S>> {
     Router::new()
         .route("/config", get(get_config::<C, A, S>))
         .route(
@@ -200,7 +200,9 @@ async fn update_table<C: CatalogStore, A: Authorizer + Clone, S: SecretStore>(
     Json(request): Json<DeltaUpdateTableRequest>,
 ) -> DeltaApiResult<Json<DeltaLoadTableResponse>> {
     let (backend, cx) = prepare(ctx, &path.prefix, metadata)?;
-    Ok(Json(backend.update_table(table_ref(path), request, cx).await?))
+    Ok(Json(
+        backend.update_table(table_ref(path), request, cx).await?,
+    ))
 }
 
 async fn delete_table<C: CatalogStore, A: Authorizer + Clone, S: SecretStore>(

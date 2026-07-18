@@ -33,7 +33,7 @@ use unitycatalog_delta_api::{
     DeltaBackend, DeltaCapabilities,
     authz::DeltaAction,
     backend::{
-        CredentialAccess, CreateTableSpec, ResolvedTable, SchemaRef, StagingReservation,
+        CreateTableSpec, CredentialAccess, ResolvedTable, SchemaRef, StagingReservation,
         UpdateTableSpec, VendedCredential, VendedCredentialKind,
     },
     column::Column,
@@ -157,13 +157,14 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
         namespace: &NamespaceIdent,
     ) -> BackendResult<crate::service::NamespaceId> {
         use crate::service::CatalogNamespaceOps;
-        let hierarchy =
-            C::get_namespace(warehouse_id, namespace.clone(), self.ctx.v1_state.catalog.clone())
-                .await
-                .map_err(to_backend_err)?
-                .ok_or_else(|| {
-                    DeltaBackendError::NotFound(format!("namespace {namespace:?} not found"))
-                })?;
+        let hierarchy = C::get_namespace(
+            warehouse_id,
+            namespace.clone(),
+            self.ctx.v1_state.catalog.clone(),
+        )
+        .await
+        .map_err(to_backend_err)?
+        .ok_or_else(|| DeltaBackendError::NotFound(format!("namespace {namespace:?} not found")))?;
         Ok(hierarchy.namespace_id())
     }
 
@@ -179,7 +180,9 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
         table_id: &str,
         action: CatalogGenericTableAction,
     ) -> BackendResult<()> {
-        let info = self.load_generic_table_by_id(warehouse_id, table_id).await?;
+        let info = self
+            .load_generic_table_by_id(warehouse_id, table_id)
+            .await?;
         let namespace = info.tabular_ident.namespace.clone();
         let table_name = info.name.clone();
         generic_tables::load_and_authorize_generic_table_operation::<C, A>(
@@ -223,9 +226,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
             )
             .await
             // `TableConfigError` reaches `ErrorModel` via `IcebergErrorResponse`.
-            .map_err(|e| {
-                to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e))
-            })
+            .map_err(|e| to_backend_err(iceberg_ext::catalog::rest::IcebergErrorResponse::from(e)))
     }
 }
 
@@ -327,9 +328,7 @@ fn vended_data_access() -> DataAccessMode {
 /// [`VendedCredentialKind::None`].
 fn to_vended_credential(url: String, table_config: &TableConfig) -> VendedCredential {
     let creds = &table_config.creds;
-    let expiration_time_ms = table_config
-        .credentials_expiration_ms
-        .unwrap_or(i64::MAX);
+    let expiration_time_ms = table_config.credentials_expiration_ms.unwrap_or(i64::MAX);
 
     let kind = if let (Some(access_key_id), Some(secret_access_key)) = (
         creds.get_prop_opt::<s3::AccessKeyId>(),
@@ -360,9 +359,8 @@ fn to_vended_credential(url: String, table_config: &TableConfig) -> VendedCreden
 /// prefix — excluding the `adls.sas-token-expires-at-ms.*` companion.
 fn adls_sas_token(creds: &iceberg_ext::configs::table::TableProperties) -> Option<String> {
     creds.inner().iter().find_map(|(k, v)| {
-        (k.starts_with("adls.sas-token.")
-            && !k.starts_with("adls.sas-token-expires-at-ms."))
-        .then(|| v.clone())
+        (k.starts_with("adls.sas-token.") && !k.starts_with("adls.sas-token-expires-at-ms."))
+            .then(|| v.clone())
     })
 }
 
