@@ -19,7 +19,7 @@ ignored = ["cloudevents-sdk", "k8s-openapi"]
 [features]
 all = ["s3-signer", "router", "open-api"]
 s3-signer = ["dep:aws-sigv4"]
-router = ["dep:tower-http", "dep:tower"]
+router = ["dep:tower-http", "dep:tower", "dep:unitycatalog-delta-api"]
 default = ["s3-signer", "router"]
 test-utils = ["lakekeeper-io/storage-in-memory"]
 open-api = ["dep:utoipa", "dep:utoipa-swagger-ui", "dep:serde_norway"]
@@ -98,6 +98,7 @@ tower-http = { workspace = true, optional = true, features = [
 tracing = { workspace = true, features = ["attributes", "valuable"] }
 typed-builder = { workspace = true }
 unicase = { workspace = true }
+unitycatalog-delta-api = { workspace = true, optional = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
 utoipa = { workspace = true, features = ["uuid"], optional = true }
@@ -121,6 +122,7 @@ pretty_assertions = { workspace = true }
 serde_norway = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
+unitycatalog-delta-api = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true }
 tracing-subscriber = { workspace = true }

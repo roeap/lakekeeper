@@ -3852,6 +3852,7 @@ dependencies = [
  "maplit",
  "mockall",
  "moka",
+ "olai-uc-delta-api",
  "pastey",
  "percent-encoding",
  "pretty_assertions",
@@ -4738,6 +4739,20 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 1.0.69",
  "url",
+]
+
+[[package]]
+name = "olai-uc-delta-api"
+version = "0.0.3"
+source = "git+https://github.com/open-lakehouse/mangrove.git?rev=38eaca5c30b39d8869d76ad75a06db21321d8104#38eaca5c30b39d8869d76ad75a06db21321d8104"
+dependencies = [
+ "async-trait",
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

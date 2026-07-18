@@ -41,7 +41,10 @@ use crate::{
 };
 
 /// Fetches and authorizes a generic table operation in one call.
-async fn load_and_authorize_generic_table_operation<C: CatalogStore, A: Authorizer + Clone>(
+pub(crate) async fn load_and_authorize_generic_table_operation<
+    C: CatalogStore,
+    A: Authorizer + Clone,
+>(
     authorizer: &A,
     request_metadata: &RequestMetadata,
     warehouse_id: WarehouseId,

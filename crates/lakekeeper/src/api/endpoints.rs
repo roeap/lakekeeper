@@ -177,6 +177,26 @@ generate_endpoints! {
         LoadGenericTableCredentials(GET, "/lakekeeper/v1/{prefix}/namespaces/{namespace}/generic-tables/{table}/credentials"),
     }
 
+    // The UC Delta v1 API (served by the `unitycatalog-delta-api` crate). The crate
+    // router owns the `/delta/v1/...` paths; Lakekeeper nests it under a warehouse
+    // `{prefix}`, so the effective matched paths are `/catalog/v1/{prefix}/delta/v1/...`.
+    // The four methods on `.../tables/{table}` share a path and are distinguished by
+    // HTTP method (loadTable / updateTable / deleteTable / tableExists).
+    enum DeltaV1 {
+        GetConfig(GET, "/catalog/v1/{prefix}/delta/v1/config"),
+        CreateStagingTable(POST, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/staging-tables"),
+        CreateTable(POST, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables"),
+        LoadTable(GET, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"),
+        UpdateTable(POST, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"),
+        DeleteTable(DELETE, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"),
+        TableExists(HEAD, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"),
+        RenameTable(POST, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/rename"),
+        GetTableCredentials(GET, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"),
+        ReportMetrics(POST, "/catalog/v1/{prefix}/delta/v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/metrics"),
+        GetStagingTableCredentials(GET, "/catalog/v1/{prefix}/delta/v1/staging-tables/{table_id}/credentials"),
+        GetTemporaryPathCredentials(GET, "/catalog/v1/{prefix}/delta/v1/temporary-path-credentials"),
+    }
+
     enum Sign {
         S3RequestGlobal(POST, "/catalog/v1/aws/s3/sign"),
         S3RequestPrefix(POST, "/catalog/v1/{prefix}/v1/aws/s3/sign"),
@@ -377,6 +397,9 @@ mod test {
         let variants: Vec<Endpoint> = GenericTableV1Endpoint::iter().map(Into::into).collect_vec();
         all_variants.extend(variants);
 
+        let variants: Vec<Endpoint> = DeltaV1Endpoint::iter().map(Into::into).collect_vec();
+        all_variants.extend(variants);
+
         let endpoint_variants = Endpoint::iter().collect_vec();
 
         // Check no duplicates in all_variants
@@ -497,6 +520,10 @@ mod test {
         for endpoint in Endpoint::iter() {
             if matches!(endpoint, Endpoint::PermissionV1(_))
                 || matches!(endpoint, Endpoint::Sign(_))
+                // The UC Delta v1 surface is specified by the `unitycatalog-delta-api`
+                // crate's own OpenAPI (`delta.yaml`), not by Lakekeeper's generated
+                // YAMLs, so it is not part of this crate-local completeness check.
+                || matches!(endpoint, Endpoint::DeltaV1(_))
             {
                 continue;
             }
