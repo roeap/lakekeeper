@@ -52,8 +52,9 @@ use crate::{
     request_metadata::RequestMetadata,
     server::{generic_tables, maybe_get_secret},
     service::{
-        CatalogGenericTableOps, CatalogStore, GenericTableId, GenericTableInfo, Location,
-        ResolvedWarehouse, SecretStore, State, Transaction, WarehouseId,
+        CatalogGenericTableOps, CatalogStore, CatalogWarehouseOps, GenericTableId,
+        GenericTableInfo, Location, ResolvedWarehouse, SecretStore, State, Transaction,
+        WarehouseId,
         authz::{Authorizer, CatalogGenericTableAction},
         events::AuthorizationFailureSource,
         storage::{StoragePermissions, TableConfig},
