@@ -13,6 +13,18 @@
 //! The write/commit and managed/staging methods return
 //! [`DeltaBackendError::NotImplemented`] and are tracked as follow-ups.
 //!
+//! # Redundant catalog loads
+//!
+//! The crate calls `authorize` and each data method (`resolve_table`,
+//! `vend_table_credential`) as independent, stateless hooks — `authorize` returns
+//! only `()`, and nothing but the table coordinate / id passes between the calls.
+//! So a `loadTable` loads the table once to authorize and again to resolve it, and
+//! a credential vend loads it in `resolve_table`, in `authorize`, and in the vend.
+//! Collapsing those would need a per-request resolved-table cache threaded across
+//! the hooks (or an upstream seam to pass resolved state), which is a follow-up:
+//! per-process caches here carry the cross-replica-invalidation hazards this repo
+//! avoids on authoritative reads.
+//!
 //! # Coordinate mapping
 //!
 //! The warehouse is carried on [`DeltaRequestContext::warehouse_id`] (parsed from
@@ -56,7 +68,7 @@ use crate::{
         CatalogGenericTableOps, CatalogStore, CatalogWarehouseOps, GenericTableId,
         GenericTableInfo, Location, ResolvedWarehouse, SecretStore, State, Transaction,
         WarehouseId,
-        authz::{Authorizer, CatalogGenericTableAction},
+        authz::{Authorizer, AuthzWarehouseOps, CatalogGenericTableAction, CatalogWarehouseAction},
         events::AuthorizationFailureSource,
         storage::{StoragePermissions, TableConfig},
     },
@@ -92,12 +104,6 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> LakekeeperDeltaBack
             ctx,
             coordinator: Arc::new(InMemoryCommitCoordinator::default()),
         }
-    }
-
-    /// The two-level namespace `[catalog, schema]` a Delta coordinate maps to.
-    fn namespace(catalog: &str, schema: &str) -> NamespaceIdent {
-        NamespaceIdent::from_vec(vec![catalog.to_string(), schema.to_string()])
-            .expect("two non-empty parts form a valid namespace")
     }
 
     /// Load the active warehouse for `warehouse_id`, mapping absence to a 404.
@@ -257,17 +263,34 @@ fn to_backend_err(e: impl Into<ErrorModel>) -> DeltaBackendError {
 // Type mapping
 // ===================================================================
 
+/// The two-level namespace `[catalog, schema]` a Delta coordinate maps to.
+///
+/// `NamespaceIdent::from_vec` rejects only an empty *vector*, not empty-string
+/// parts, so empty `catalog`/`schema` segments are rejected here as a 400 rather
+/// than forming a malformed namespace whose lookup fails later as a confusing 404.
+fn namespace(catalog: &str, schema: &str) -> BackendResult<NamespaceIdent> {
+    if catalog.is_empty() || schema.is_empty() {
+        return Err(DeltaBackendError::InvalidArgument(
+            "Delta catalog and schema must be non-empty".to_string(),
+        ));
+    }
+    NamespaceIdent::from_vec(vec![catalog.to_string(), schema.to_string()]).map_err(|e| {
+        DeltaBackendError::InvalidArgument(format!("invalid catalog/schema namespace: {e}"))
+    })
+}
+
 /// Map a stored generic table into the crate's portable [`ResolvedTable`].
 ///
 /// The Delta table type / format are inferred from the generic-table `format`
 /// string (`"delta"` → managed Delta). Columns come from the stored `schema` blob,
 /// which by this integration's convention holds the Delta wire `StructType` JSON.
-/// A `None`/unparseable blob yields empty columns so `loadTable` still succeeds.
-fn table_to_resolved(info: &GenericTableInfo) -> ResolvedTable {
+/// A stored-but-unparseable schema is an error (see [`columns_from_schema`]); an
+/// absent schema yields empty columns so a table without one still loads.
+fn table_to_resolved(info: &GenericTableInfo) -> BackendResult<ResolvedTable> {
     let is_delta = info.format.as_str() == "delta";
-    let columns = columns_from_schema(info.schema.as_ref());
+    let columns = columns_from_schema(info.schema.as_ref())?;
 
-    ResolvedTable {
+    Ok(ResolvedTable {
         table_id: Some(info.generic_table_id.to_string()),
         location: info.location.to_string(),
         // Generic tables carry no managed/external distinction; a Delta generic
@@ -285,22 +308,29 @@ fn table_to_resolved(info: &GenericTableInfo) -> ResolvedTable {
         // crate's "untracked" sentinel) is correct here. Surfacing the real version
         // is part of the write-path milestone.
         version: 0,
-    }
+    })
 }
 
 /// Convert a stored generic-table `schema` blob into the crate's UC [`Column`]s.
 ///
 /// The blob holds the Delta wire `StructType` JSON (this integration's convention;
-/// the field is otherwise free-form and unvalidated). Absent or unparseable → no
-/// columns, so a table without a stored Delta schema still loads.
-fn columns_from_schema(schema: Option<&serde_json::Value>) -> Vec<Column> {
+/// the field is otherwise free-form and unvalidated). An absent blob yields no
+/// columns, so a table without a stored Delta schema still loads. A blob that is
+/// present but not a valid Delta `StructType` is a corrupt/foreign schema and is
+/// surfaced as an error rather than served as a column-less table, which would
+/// leave the Delta client reading nothing.
+fn columns_from_schema(schema: Option<&serde_json::Value>) -> BackendResult<Vec<Column>> {
     let Some(schema) = schema else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    match serde_json::from_value::<DeltaStructType>(schema.clone()) {
-        Ok(struct_type) => contract::delta_columns_to_uc(&struct_type, None).unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+    let struct_type = serde_json::from_value::<DeltaStructType>(schema.clone()).map_err(|e| {
+        DeltaBackendError::Internal(format!(
+            "stored table schema is not a valid Delta schema: {e}"
+        ))
+    })?;
+    contract::delta_columns_to_uc(&struct_type, None).map_err(|e| {
+        DeltaBackendError::Internal(format!("stored Delta schema could not be converted: {e}"))
+    })
 }
 
 /// Map the crate's [`CredentialAccess`] onto Lakekeeper's [`StoragePermissions`].
@@ -325,9 +355,19 @@ fn vended_data_access() -> DataAccessMode {
 ///
 /// The vended credential kind is determined by which credential keys the storage
 /// profile populated in `creds` (S3 access keys, a GCS OAuth token, or a dynamic
-/// `adls.sas-token.<account>` entry); an empty/unrecognized set vends
-/// [`VendedCredentialKind::None`].
-fn to_vended_credential(url: String, table_config: &TableConfig) -> VendedCredential {
+/// `adls.sas-token.<account>` entry). A set with none of these recognized keys
+/// means the vend did not yield a credential this path can hand to a client (e.g.
+/// a remote-signing-only profile, which this read path disables) and is surfaced
+/// as an error rather than a `200` carrying an unusable [`VendedCredentialKind::None`].
+///
+/// `expiration_time_ms` comes straight from the storage profile. A profile that
+/// leaves it unset (`credentials_expiration_ms == None`) is stating the credential
+/// does not expire; that only holds for genuinely long-lived static creds, so a
+/// profile that vends short-lived creds must populate the field.
+fn to_vended_credential(
+    url: String,
+    table_config: &TableConfig,
+) -> BackendResult<VendedCredential> {
     let creds = &table_config.creds;
     let expiration_time_ms = table_config.credentials_expiration_ms.unwrap_or(i64::MAX);
 
@@ -345,14 +385,16 @@ fn to_vended_credential(url: String, table_config: &TableConfig) -> VendedCreden
     } else if let Some(sas_token) = adls_sas_token(creds) {
         VendedCredentialKind::AzureSas { sas_token }
     } else {
-        VendedCredentialKind::None
+        return Err(DeltaBackendError::Internal(
+            "storage profile vended no credential this Delta endpoint can serve (no S3, GCS, or ADLS keys present)".to_string(),
+        ));
     };
 
-    VendedCredential {
+    Ok(VendedCredential {
         url,
         expiration_time_ms,
         kind,
-    }
+    })
 }
 
 /// Extract an ADLS/OneLake SAS token from vended creds. The key is
@@ -385,7 +427,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
         // vends; write/staging/path actions are not served in this milestone.
         match action {
             DeltaAction::ReadTable { table } => {
-                let namespace = Self::namespace(&table.catalog, &table.schema);
+                let namespace = namespace(&table.catalog, &table.schema)?;
                 generic_tables::load_and_authorize_generic_table_operation::<C, A>(
                     &self.ctx.v1_state.authz,
                     &cx.metadata,
@@ -430,7 +472,28 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
     async fn catalog_exists(&self, _catalog: &str, cx: &DeltaRequestContext) -> BackendResult<()> {
         // The warehouse (from the URL prefix) is the authoritative scope; the Delta
         // `catalog` arg is advisory (the top-level namespace the client will use).
-        self.require_warehouse(cx.warehouse_id).await.map(|_| ())
+        //
+        // The crate has no `getConfig` authz action (it authorizes via
+        // `catalog_exists`), so the warehouse-level `GetConfig` check that the
+        // iceberg `GET /config` enforces (`server::config`) lives here. Without it
+        // any authenticated caller could probe warehouse existence via `getConfig`.
+        // `require_warehouse_action` masks a warehouse the caller cannot see as a
+        // 404 (`WarehouseIdNotFound`) and returns a native 403 only for a forbidden
+        // action on a warehouse the caller *can* see, so existence never leaks.
+        let warehouse =
+            C::get_active_warehouse_by_id(cx.warehouse_id, self.ctx.v1_state.catalog.clone()).await;
+        self.ctx
+            .v1_state
+            .authz
+            .require_warehouse_action(
+                &cx.metadata,
+                cx.warehouse_id,
+                warehouse,
+                CatalogWarehouseAction::GetConfig,
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| to_backend_err(e.into_error_model()))
     }
 
     async fn resolve_table(
@@ -438,11 +501,11 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
         table: &unitycatalog_delta_api::backend::TableRef,
         cx: &DeltaRequestContext,
     ) -> BackendResult<ResolvedTable> {
-        let namespace = Self::namespace(&table.catalog, &table.schema);
+        let namespace = namespace(&table.catalog, &table.schema)?;
         let info = self
             .load_generic_table(cx.warehouse_id, &namespace, &table.table)
             .await?;
-        Ok(table_to_resolved(&info))
+        table_to_resolved(&info)
     }
 
     async fn validate_external_location(
@@ -544,7 +607,7 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
         let table_config = self
             .generate_table_config(cx, &location, to_storage_permissions(access), &info)
             .await?;
-        Ok(to_vended_credential(location.to_string(), &table_config))
+        to_vended_credential(location.to_string(), &table_config)
     }
 
     async fn vend_path_credential(
@@ -565,5 +628,92 @@ impl<C: CatalogStore, A: Authorizer + Clone, S: SecretStore> DeltaBackend<DeltaR
 
     fn commit_coordinator(&self) -> &dyn CommitCoordinator {
         self.coordinator.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iceberg_ext::configs::table::TableProperties;
+    use serde_json::json;
+
+    use super::*;
+
+    fn table_config(creds: TableProperties, expiration_ms: Option<i64>) -> TableConfig {
+        TableConfig {
+            creds,
+            config: TableProperties::default(),
+            credentials_expiration_ms: expiration_ms,
+            remote_signing: None,
+        }
+    }
+
+    #[test]
+    fn namespace_rejects_empty_parts() {
+        assert!(matches!(
+            namespace("", "schema"),
+            Err(DeltaBackendError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            namespace("catalog", ""),
+            Err(DeltaBackendError::InvalidArgument(_))
+        ));
+        let ns = namespace("catalog", "schema").expect("non-empty parts form a namespace");
+        assert_eq!(ns.inner(), &["catalog".to_string(), "schema".to_string()]);
+    }
+
+    #[test]
+    fn columns_from_absent_schema_is_empty() {
+        assert!(
+            columns_from_schema(None)
+                .expect("absent schema is fine")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn columns_from_malformed_schema_errors() {
+        // A present-but-not-a-Delta-StructType blob is corruption, surfaced as an
+        // error rather than served as a column-less table.
+        let blob = json!({"not": "a delta struct type"});
+        assert!(matches!(
+            columns_from_schema(Some(&blob)),
+            Err(DeltaBackendError::Internal(_))
+        ));
+    }
+
+    #[test]
+    fn columns_from_valid_delta_schema_parses() {
+        let blob = json!({
+            "type": "struct",
+            "fields": [
+                {"name": "id", "type": "long", "nullable": false, "metadata": {}}
+            ]
+        });
+        let columns = columns_from_schema(Some(&blob)).expect("valid delta schema parses");
+        assert_eq!(columns.len(), 1);
+    }
+
+    #[test]
+    fn vend_s3_credential_uses_profile_expiration() {
+        let mut creds = TableProperties::default();
+        creds.insert(&s3::AccessKeyId("AKIA".to_string()));
+        creds.insert(&s3::SecretAccessKey("secret".to_string()));
+        let cfg = table_config(creds, Some(1_700_000_000_000));
+
+        let vended = to_vended_credential("s3://bucket/t".to_string(), &cfg)
+            .expect("recognized S3 creds vend");
+        assert_eq!(vended.expiration_time_ms, 1_700_000_000_000);
+        assert!(matches!(vended.kind, VendedCredentialKind::S3 { .. }));
+    }
+
+    #[test]
+    fn vend_credential_without_recognized_keys_errors() {
+        // No S3/GCS/ADLS keys present: a vend this endpoint cannot serve, surfaced
+        // as an error rather than a 200 carrying an unusable `None` kind.
+        let cfg = table_config(TableProperties::default(), Some(1));
+        assert!(matches!(
+            to_vended_credential("s3://bucket/t".to_string(), &cfg),
+            Err(DeltaBackendError::Internal(_))
+        ));
     }
 }
