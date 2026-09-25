@@ -4791,8 +4791,9 @@ dependencies = [
 
 [[package]]
 name = "olai-uc-delta-api"
-version = "0.0.3"
-source = "git+https://github.com/open-lakehouse/mangrove.git?rev=38eaca5c30b39d8869d76ad75a06db21321d8104#38eaca5c30b39d8869d76ad75a06db21321d8104"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "838d436c1cc6fbb2c716fe00d15b95d67146df1abe4bc0c9743bf8522cc0d8d5"
 dependencies = [
  "async-trait",
  "axum",
