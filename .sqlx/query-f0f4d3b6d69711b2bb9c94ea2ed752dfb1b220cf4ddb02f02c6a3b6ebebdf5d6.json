@@ -207,7 +207,19 @@
                 "management-v1-list-namespace-subtree-grants",
                 "management-v1-revoke-namespace-subtree-grants",
                 "management-v1-list-warehouse-subtree-grants",
-                "management-v1-revoke-warehouse-subtree-grants"
+                "management-v1-revoke-warehouse-subtree-grants",
+                "delta-v1-get-config",
+                "delta-v1-create-staging-table",
+                "delta-v1-create-table",
+                "delta-v1-load-table",
+                "delta-v1-update-table",
+                "delta-v1-delete-table",
+                "delta-v1-table-exists",
+                "delta-v1-rename-table",
+                "delta-v1-get-table-credentials",
+                "delta-v1-report-metrics",
+                "delta-v1-get-staging-table-credentials",
+                "delta-v1-get-temporary-path-credentials"
               ]
             }
           }
